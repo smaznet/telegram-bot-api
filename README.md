@@ -1,4 +1,4 @@
-# Telegram Bot API
+# Telegram Bot API (plus)
 
 The Telegram Bot API provides an HTTP API for creating [Telegram Bots](https://core.telegram.org/bots).
 
