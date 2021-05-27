@@ -1,6 +1,48 @@
 # Telegram Bot API (plus)
 Thanks to [Tdlight](https://github.com/tdlight-team/tdlight-telegram-bot-api) i copied this changes from their code
 
+
+<a name="added-api-methods"></a>
+#### Added API Methods
+
+##### Method `getMessageInfo`
+Get information about a message
+###### Parameters
+- `chat_id` Message chat id
+- `message_id` Message id
+###### Returns `message`
+
+ Document the following methods:
+##### Method `getParticipants`
+Get the member list of a supergroup or channel
+###### Parameters
+- `chat_id` Chat id
+- `filter` String, possible values are
+    `members`, `parameters`, `admins`, `administators`, `restricted`, `banned`, `bots`
+- `offset` Number of users to skip
+- `limit` The maximum number of users be returned; up to 200
+
+###### Returns `ChatMember`
+
+##### Method `deleteMessages`
+Delete all the messages with message_id in range between `start` and `end`.  
+The `start` parameter MUST be less than the `end` parameter  
+Both `start` and `end` must be positive non zero numbers  
+The method will always return `true` as a result, even if the messages cannot be deleted  
+This method does not work on private chat or normal groups
+It is not suggested to delete more than 200 messages per call
+
+**NOTE**  
+The maximum number of messages to be deleted in a single batch is determined by the `max-batch-operations` parameter and is 10000 by default
+
+###### Parameters
+- `chat_id` Chat id
+- `start` First message id to delete
+- `end` Last message id to delete
+###### Returns `true`
+
+
+
 The Telegram Bot API provides an HTTP API for creating [Telegram Bots](https://core.telegram.org/bots).
 
 If you've got any questions about bots or would like to report an issue with your bot, kindly contact us at [@BotSupport](https://t.me/BotSupport) in Telegram.
