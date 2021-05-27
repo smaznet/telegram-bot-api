@@ -65,6 +65,7 @@ struct ClientParameters {
   td::IPAddress webhook_proxy_ip_address_;
 
   double start_time_ = 0;
+  double max_batch_operations = 1e6;
 
   td::ActorId<td::GetHostByNameActor> get_host_by_name_actor_id_;
 

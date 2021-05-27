@@ -187,6 +187,16 @@ class Client : public WebhookActor::Callback {
   class TdOnCancelDownloadFileCallback;
   class TdOnSendCustomRequestCallback;
 
+
+  class TdOnPingCallback;
+  // class TdOnGetMemoryStatisticsCallback;
+  class TdOnGetChatsCallback;
+  class TdOnGetChatsNearbyCallback;
+  class TdOnJoinChatCallback;
+  class TdOnReturnChatCallback;
+  class TdOnReturnMessagesCallback;
+  class TdOnGetCallbackQueryAnswerCallback;
+
   void on_get_reply_message(int64 chat_id, object_ptr<td_api::message> reply_to_message);
 
   void on_get_edited_message(object_ptr<td_api::message> edited_message);
@@ -488,6 +498,12 @@ class Client : public WebhookActor::Callback {
   Status process_set_webhook_query(PromisedQueryPtr &query);
   Status process_get_webhook_info_query(PromisedQueryPtr &query);
   Status process_get_file_query(PromisedQueryPtr &query);
+  Status process_get_message_info_query(PromisedQueryPtr &query);
+  Status process_get_chat_members_query(PromisedQueryPtr &query);
+  Status process_delete_messages_query(PromisedQueryPtr &query);
+  Status process_toggle_group_invites_query(PromisedQueryPtr &query);
+  Status process_ping_query(PromisedQueryPtr &query);
+  Status process_get_memory_stats_query(PromisedQueryPtr &query);
 
   void webhook_verified(td::string cached_ip_address) override;
   void webhook_success() override;

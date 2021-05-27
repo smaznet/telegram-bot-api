@@ -253,6 +253,13 @@ bool Client::init_methods() {
   methods_.emplace("deletewebhook", &Client::process_set_webhook_query);
   methods_.emplace("getwebhookinfo", &Client::process_get_webhook_info_query);
   methods_.emplace("getfile", &Client::process_get_file_query);
+
+  // extra methods
+  methods_.emplace("getmessageinfo", &Client::process_get_message_info_query);
+  methods_.emplace("getparticipants", &Client::process_get_chat_members_query);
+  methods_.emplace("getchatmembers", &Client::process_get_chat_members_query);
+  methods_.emplace("deletemessages", &Client::process_delete_messages_query);
+
   return true;
 }
 
@@ -4032,6 +4039,7 @@ void Client::on_update_authorization_state() {
       parameters->use_message_database_ = USE_MESSAGE_DATABASE;
       parameters->api_id_ = parameters_->api_id_;
       parameters->api_hash_ = parameters_->api_hash_;
+    
       parameters->system_language_code_ = "en";
       parameters->device_model_ = "server";
       parameters->application_version_ = parameters_->version_;
@@ -7651,6 +7659,111 @@ td::Status Client::process_get_file_query(PromisedQueryPtr &query) {
   check_remote_file_id(file_id, std::move(query), [this](object_ptr<td_api::file> file, PromisedQueryPtr query) {
     do_get_file(std::move(file), std::move(query));
   });
+  return Status::OK();
+}
+
+// extra methods
+td::Status Client::process_get_message_info_query(PromisedQueryPtr &query) {
+  auto chat_id = query->arg("chat_id");
+  auto message_id = get_message_id(query.get(), "message_id");
+  check_message(chat_id, message_id, false, AccessRights::Read, "message", std::move(query),
+                [this](int64 chat_id, int64 message_id, PromisedQueryPtr query) {
+                  auto message = get_message(chat_id, message_id);
+                  answer_query(JsonMessage(message, false, "get message info", this), std::move(query));
+                });
+
+  return Status::OK();
+}
+td::Status Client::process_get_chat_members_query(PromisedQueryPtr &query) {
+  auto chat_id = query->arg("chat_id");
+  td::int32 offset = get_integer_arg(query.get(), "offset", 0);
+  td::int32 limit = get_integer_arg(query.get(), "limit", 200, 0, 200);
+
+  check_chat(
+      chat_id, AccessRights::Read, std::move(query), [this, offset, limit](int64 chat_id, PromisedQueryPtr query) {
+        auto chat_info = get_chat(chat_id);
+        CHECK(chat_info != nullptr);
+    switch (chat_info->type) {
+      case ChatInfo::Type::Private:
+        return fail_query(400, "Bad Request: there are no administrators in the private chat", std::move(query));
+      case ChatInfo::Type::Group: {
+        auto group_info = get_group_info(chat_info->group_id);
+        CHECK(group_info != nullptr);
+        return send_request(make_object<td_api::getBasicGroupFullInfo>(chat_info->group_id),
+                            std::make_unique<TdOnGetGroupMembersCallback>(this, false, std::move(query)));
+      }
+      case ChatInfo::Type::Supergroup: {
+        td_api::object_ptr<td_api::SupergroupMembersFilter> filter;
+        td::string filter_name = td::to_lower(query->arg("filter"));
+        auto query_ = query->arg("query");
+        if (!query->empty()) {
+          filter = td_api::make_object<td_api::supergroupMembersFilterSearch>(query_.str());
+        } else if (filter_name == "members" || filter_name == "participants") {
+          filter = td_api::make_object<td_api::supergroupMembersFilterRecent>();
+        } else if (filter_name == "banned") {
+          filter = td_api::make_object<td_api::supergroupMembersFilterBanned>();
+        } else if (filter_name == "restricted") {
+          filter = td_api::make_object<td_api::supergroupMembersFilterRestricted>();
+        } else if (filter_name == "bots") {
+          filter = td_api::make_object<td_api::supergroupMembersFilterBots>();
+        } else if (filter_name == "admins" || filter_name == "administrators") {
+          filter = td_api::make_object<td_api::supergroupMembersFilterAdministrators>();
+        } else {
+          fail_query_with_error(std::move(query), 400, "Invalid member type");
+          return;
+        }
+        return send_request(
+            make_object<td_api::getSupergroupMembers>(
+                chat_info->supergroup_id, std::move(filter), offset, limit),
+            std::make_unique<TdOnGetSupergroupMembersCallback>(this, get_chat_type(chat_id), std::move(query)));
+      }
+      case ChatInfo::Type::Unknown:
+      default:
+        UNREACHABLE();
+    }
+  });
+  return Status::OK();
+}
+
+td::Status Client::process_delete_messages_query(PromisedQueryPtr &query) {
+  auto chat_id = query->arg("chat_id");
+
+  if (chat_id.empty()) {
+    return Status::Error(400, "Chat identifier is not specified");
+  }
+
+  auto start = as_client_message_id(get_message_id(query.get(), "start"));
+  auto end = as_client_message_id(get_message_id(query.get(), "end"));
+
+  if (start == 0 || end == 0) {
+    return Status::Error(400, "Message identifier is not specified");
+  }
+
+  if (start >= end) {
+    return Status::Error(400, "Initial message identifier is not lower than last message identifier");
+  }
+
+  if (static_cast<td::uint32>(end-start) > parameters_->max_batch_operations) {
+    return Status::Error(400, PSLICE() << "Too many operations: maximum number of batch operation is " << parameters_->max_batch_operations);
+  }
+
+  check_chat(chat_id, AccessRights::Write, std::move(query), [this, start, end](int64 chat_id, PromisedQueryPtr query) {
+    if (get_chat_type(chat_id) != ChatType::Supergroup) {
+      return fail_query(400, "Bad Request: method is available only for supergroups", std::move(query));
+    }
+
+    td::vector<td::int64> ids;
+    ids.reserve(end-start+1);
+    for (td::int32 i = start; i <= end; i++) {
+      ids.push_back(as_tdlib_message_id(i));
+    }
+
+    if (!ids.empty()) {
+      send_request(make_object<td_api::deleteMessages>(chat_id, std::move(ids), true),
+                   std::make_unique<TdOnOkQueryCallback>(std::move(query)));
+    }
+  });
+
   return Status::OK();
 }
 
