@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -24,6 +24,7 @@
 #include "td/actor/ConcurrentScheduler.h"
 #include "td/actor/PromiseFuture.h"
 
+#include "td/utils/algorithm.h"
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
 #include "td/utils/crypto.h"
@@ -133,6 +134,7 @@ int main(int argc, char *argv[]) {
   auto start_time = td::Time::now();
   auto shared_data = std::make_shared<SharedData>();
   auto parameters = std::make_unique<ClientParameters>();
+  parameters->version_ = "5.2";
   parameters->shared_data_ = shared_data;
   parameters->start_time_ = start_time;
   auto net_query_stats = td::create_net_query_stats();
@@ -140,12 +142,14 @@ int main(int argc, char *argv[]) {
 
   td::OptionParser options;
   bool need_print_usage = false;
+  bool need_print_version = false;
   int http_port = 8081;
   int http_stat_port = 0;
   td::string http_ip_address = "0.0.0.0";
   td::string http_stat_ip_address = "0.0.0.0";
   td::string log_file_path;
-  int verbosity_level = 0;
+  int default_verbosity_level = 0;
+  int memory_verbosity_level = VERBOSITY_NAME(INFO);
   td::int64 log_max_file_size = 2000000000;
   td::string working_directory;
   td::string temporary_directory;
@@ -170,6 +174,7 @@ int main(int argc, char *argv[]) {
   options.set_usage(td::Slice(argv[0]), "--api-id=<arg> --api-hash=<arg> [--local] [OPTION]...");
   options.set_description("Telegram Bot API server");
   options.add_option('h', "help", "display this help text and exit", [&] { need_print_usage = true; });
+  options.add_option('\0', "version", "display version number and exit", [&] { need_print_version = true; });
   options.add_option('\0', "local", "allow the Bot API server to serve local requests",
                      [&] { parameters->local_mode_ = true; });
   options.add_checked_option(
@@ -224,7 +229,10 @@ int main(int argc, char *argv[]) {
 
   options.add_option('l', "log", "path to the file where the log will be written",
                      td::OptionParser::parse_string(log_file_path));
-  options.add_checked_option('v', "verbosity", "log verbosity level", td::OptionParser::parse_integer(verbosity_level));
+  options.add_checked_option('v', "verbosity", "log verbosity level",
+                             td::OptionParser::parse_integer(default_verbosity_level));
+  options.add_checked_option('\0', "memory-verbosity", "memory log verbosity level; defaults to 3",
+                             td::OptionParser::parse_integer(memory_verbosity_level));
   options.add_checked_option(
       '\0', "log-max-file-size",
       PSLICE() << "maximum size of the log file in bytes before it will be auto-rotated (default is "
@@ -253,14 +261,24 @@ int main(int argc, char *argv[]) {
     return td::Status::OK();
   });
   options.add_check([&] {
-    if (verbosity_level < 0) {
+    if (default_verbosity_level < 0) {
       return td::Status::Error("Wrong verbosity level specified");
+    }
+    return td::Status::OK();
+  });
+  options.add_check([&] {
+    if (memory_verbosity_level < 0) {
+      return td::Status::Error("Wrong memory verbosity level specified");
     }
     return td::Status::OK();
   });
   auto r_non_options = options.run(argc, argv, 0);
   if (need_print_usage) {
     LOG(PLAIN) << options;
+    return 0;
+  }
+  if (need_print_version) {
+    LOG(PLAIN) << "Bot API " << parameters->version_;
     return 0;
   }
   if (r_non_options.is_error()) {
@@ -273,6 +291,9 @@ int main(int argc, char *argv[]) {
    public:
     void append(td::CSlice slice, int log_level) override {
       if (first_ && log_level <= first_verbosity_level_) {
+        if (log_level == VERBOSITY_NAME(FATAL) && second_ && VERBOSITY_NAME(FATAL) <= second_verbosity_level_) {
+          second_->append(slice, VERBOSITY_NAME(ERROR));
+        }
         first_->append(slice, log_level);
       }
       if (second_ && log_level <= second_verbosity_level_) {
@@ -294,6 +315,14 @@ int main(int argc, char *argv[]) {
 
     void set_second_verbosity_level(int verbosity_level) {
       second_verbosity_level_ = verbosity_level;
+    }
+
+    int get_first_verbosity_level() const {
+      return first_verbosity_level_;
+    }
+
+    int get_second_verbosity_level() const {
+      return second_verbosity_level_;
     }
 
     void rotate() override {
@@ -367,14 +396,17 @@ int main(int argc, char *argv[]) {
 
   ::td::VERBOSITY_NAME(dns_resolver) = VERBOSITY_NAME(WARNING);
 
-  int memory_verbosity_level = td::max(VERBOSITY_NAME(INFO), verbosity_level);
-  SET_VERBOSITY_LEVEL(memory_verbosity_level);
-  log.set_first_verbosity_level(verbosity_level);
   log.set_second_verbosity_level(memory_verbosity_level);
+
+  auto set_verbosity_level = [&log, memory_verbosity_level](int new_verbosity_level) {
+    SET_VERBOSITY_LEVEL(td::max(memory_verbosity_level, new_verbosity_level));
+    log.set_first_verbosity_level(new_verbosity_level);
+  };
+  set_verbosity_level(default_verbosity_level);
 
   // LOG(WARNING) << "Bot API server with commit " << td::GitInfo::commit() << ' '
   //              << (td::GitInfo::is_dirty() ? "(dirty)" : "") << " started";
-  LOG(WARNING) << "Bot API server started";
+  LOG(WARNING) << "Bot API " << parameters->version_ << " server started";
 
   const int threads_n = 5;  // +3 for Td, one for slow HTTP connections and one for DNS resolving
   td::ConcurrentScheduler sched;
@@ -442,20 +474,18 @@ int main(int argc, char *argv[]) {
     }
 
     if (!need_change_verbosity_level.test_and_set()) {
-      auto current_global_verbosity_level = GET_VERBOSITY_LEVEL();
-      SET_VERBOSITY_LEVEL(256 - current_global_verbosity_level);
-      verbosity_level = 256 - verbosity_level;
-      log.set_first_verbosity_level(verbosity_level);
+      if (log.get_first_verbosity_level() == default_verbosity_level) {
+        // increase default log verbosity level
+        set_verbosity_level(100);
+      } else {
+        // return back verbosity level
+        set_verbosity_level(default_verbosity_level);
+      }
     }
 
     auto next_verbosity_level = shared_data->next_verbosity_level_.exchange(-1);
     if (next_verbosity_level != -1) {
-      verbosity_level = next_verbosity_level;
-      memory_verbosity_level = td::max(VERBOSITY_NAME(INFO), verbosity_level);
-      SET_VERBOSITY_LEVEL(memory_verbosity_level);
-
-      log.set_first_verbosity_level(verbosity_level);
-      log.set_second_verbosity_level(memory_verbosity_level);
+      set_verbosity_level(next_verbosity_level);
     }
 
     if (!need_dump_log.test_and_set()) {
