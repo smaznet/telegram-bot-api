@@ -1,4 +1,5 @@
 # Telegram Bot API (plus)
+Thanks to [Tdlight](https://github.com/tdlight-team/tdlight-telegram-bot-api) i copied this changes from their code
 
 The Telegram Bot API provides an HTTP API for creating [Telegram Bots](https://core.telegram.org/bots).
 
