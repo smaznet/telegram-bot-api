@@ -259,7 +259,6 @@ bool Client::init_methods() {
   methods_.emplace("getparticipants", &Client::process_get_chat_members_query);
   methods_.emplace("getchatmembers", &Client::process_get_chat_members_query);
   methods_.emplace("deletemessages", &Client::process_delete_messages_query);
-
   return true;
 }
 
@@ -7766,6 +7765,8 @@ td::Status Client::process_delete_messages_query(PromisedQueryPtr &query) {
 
   return Status::OK();
 }
+
+
 
 void Client::do_get_file(object_ptr<td_api::file> file, PromisedQueryPtr query) {
   if (!parameters_->local_mode_ &&
